@@ -1,0 +1,32 @@
+# Dependencies and build output
+node_modules/
+dist/
+.tools/
+.cache/
+.vite/
+coverage/
+
+# Secrets — keep only the documented template
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private student media and local uploads
+uploads/
+public/uploads/
+private-media/
+student-photos/
+
+# Logs and operating-system files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor state
+.idea/
+.vscode/
+*.swp
