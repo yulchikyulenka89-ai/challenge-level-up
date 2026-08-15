@@ -8,12 +8,13 @@ function required(name, env = process.env) {
 
 export function loadConfig(env = process.env) {
   const production = env.NODE_ENV === "production";
+  const port = Number(env.PORT || 3000);
   return {
     production,
-    port: Number(env.PORT || 3000),
+    port,
     databaseUrl: required("DATABASE_URL", env),
     sessionSecret: required("SESSION_SECRET", env),
-    appUrl: env.APP_URL?.trim() || `http://localhost:${Number(env.PORT || 3000)}`,
+    appUrl: env.APP_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim() || `http://localhost:${port}`,
     trustProxy: production,
     secureCookies: production,
     sessionHours: Math.max(1, Number(env.SESSION_HOURS || 12)),
