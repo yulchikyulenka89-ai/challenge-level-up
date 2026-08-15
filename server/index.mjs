@@ -2,12 +2,15 @@ import { resolve } from "node:path";
 import express from "express";
 import { loadConfig } from "./config.mjs";
 import { createPool, migrate } from "./db.mjs";
+import { provision } from "./provision.mjs";
 import { createApp } from "./app.mjs";
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl);
 
 await migrate(pool);
+const provisioning = await provision(pool, process.env);
+console.log(`ELU account provisioning ensured: ${provisioning.students} students, ${provisioning.admins} admin, ${provisioning.createdAccounts} newly created`);
 
 const app = createApp({
   pool,
