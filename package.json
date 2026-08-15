@@ -8,9 +8,10 @@
     "dev": "node scripts/dev-server.mjs",
     "lint": "node scripts/check.mjs",
     "typecheck": "node --check app.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs",
+    "pretest": "npm run build",
     "test": "node --test",
     "build": "node scripts/build.mjs",
-    "check": "npm run lint && npm run typecheck && npm run build && npm test"
+    "check": "npm run lint && npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=20"
