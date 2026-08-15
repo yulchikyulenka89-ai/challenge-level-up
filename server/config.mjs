@@ -13,6 +13,7 @@ export function loadConfig(env = process.env) {
     port: Number(env.PORT || 3000),
     databaseUrl: required("DATABASE_URL", env),
     sessionSecret: required("SESSION_SECRET", env),
+    appUrl: env.APP_URL?.trim() || `http://localhost:${Number(env.PORT || 3000)}`,
     trustProxy: production,
     secureCookies: production,
     sessionHours: Math.max(1, Number(env.SESSION_HOURS || 12)),
