@@ -16,6 +16,9 @@
       document.documentElement.dataset.theme = theme;
     })();
   </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Russo+One&amp;display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="styles-polish.css" />
 </head>
@@ -50,8 +53,7 @@
         <button class="level-card" data-route="profile" aria-label="Открыть профиль уровня B1"><strong>B1</strong><span>Твой уровень</span><small>Intermediate</small></button>
         <button class="mini-profile" data-route="profile" id="miniProfile"></button>
         <div class="side-actions">
-          <button data-action="toggle-sound" class="icon-btn" aria-label="Переключить звуки"><svg><use href="#i-volume"/></svg></button>
-          <button data-action="open-admin" class="icon-btn" aria-label="Открыть админ-панель"><svg><use href="#i-settings"/></svg></button>
+          <button data-action="toggle-sound" class="icon-btn" aria-label="Переключить звуки"><svg class="ui-icon" aria-hidden="true"><use href="#i-volume"/></svg></button>
         </div>
       </div>
     </aside>

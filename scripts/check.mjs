@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const required = ["index.html", "styles.css", "styles-polish.css", "app.js", "README.md", ".env.example", "docs/asset-map.md", "public/assets/hero/elu-hero-clean.png"];
+const required = ["index.html", "styles.css", "styles-polish.css", "app.js", "README.md", ".env.example", "docs/asset-map.md", "public/assets/hero/elu-hero-clean.png", "test/critical-ui.test.mjs"];
 const gameAssets = ["ticket/ticket.png", "sticker/sticker.png", "access-key/access-key.png", "power-card/power-card.png", "drop/drop.png", "badge/badge.png", "crew-token/crew-token.png", "spotlight/spotlight.png"];
 const failures = [];
 for (const file of required) if (!existsSync(file)) failures.push(`Missing ${file}`);
@@ -22,6 +22,16 @@ if (!/elu-theme/.test(`${app}\n${html}`)) failures.push("Persistent light/dark t
 if (!/function assetUrl\(path\)/.test(app)) failures.push("GitHub Pages-safe asset resolver is missing");
 if (!/Моя коллекция/.test(app)) failures.push("Profile reward collection is missing");
 if (!html.includes('href="styles-polish.css"')) failures.push("Polish stylesheet is not linked");
+if (/\bonclick\s*=/.test(`${app}\n${html}`)) failures.push("Inline click handlers must not exist");
+if (/backdrop[^>]*data-action=["']close-overlay/.test(app)) failures.push("Backdrop must not be a delegated close action ancestor");
+if (!/data-overlay-backdrop/.test(app)) failures.push("Explicit overlay backdrop handling is missing");
+if (!/class="ui-icon"/.test(app) || !/\.ui-icon/.test(css)) failures.push("Bounded UI icon system is missing");
+if (/data-action="open-admin"/.test(`${app}\n${html}`)) failures.push("Student UI must not expose an Admin shortcut");
+if (!/student-card-readonly/.test(app)) failures.push("Student crew cards must be read-only");
+if (!/LocalDemoStore/.test(app) || !/STORAGE_VERSION/.test(app)) failures.push("Versioned LocalDemoStore adapter is missing");
+if (!/adminPreviewStudentId/.test(app) || !/currentStudentId/.test(app)) failures.push("Student session and Admin Preview identities must be separate");
+if (!/function hasLeaderboardStarted/.test(app)) failures.push("XP-specific leaderboard zero state is missing");
+if (!/data-action="open-current-mission"/.test(app) || !/data-action="submit-mission"/.test(app)) failures.push("Mission detail/submission flow is incomplete");
 if (!html.includes('name="robots" content="noindex,nofollow,noarchive"')) failures.push("Private app robots policy missing");
 if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
 console.log("ELU static lint: OK");

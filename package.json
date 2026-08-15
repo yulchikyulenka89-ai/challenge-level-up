@@ -10,9 +10,12 @@
     "typecheck": "node --check app.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs",
     "test": "node --test",
     "build": "node scripts/build.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm run build && npm test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.2"
   }
 }

@@ -1,6 +1,6 @@
 # ELU Live — English Level Up
 
-ELU Live is an animated festival-style student dashboard and teacher tracker for a private four-student B1 English challenge. The repository has a zero-dependency Node development/build workflow plus a PowerShell server fallback for the supplied Windows environment.
+ELU Live is an animated festival-style student dashboard and teacher tracker for a private four-student B1 English challenge. The repository has a small Node development/build workflow plus a PowerShell server fallback for the supplied Windows environment.
 
 ## Included
 
@@ -12,7 +12,8 @@ ELU Live is an animated festival-style student dashboard and teacher tracker for
 - Admin Tracker, Quick Update, 4×8 Matrix, Lesson Mode, reason-required XP, streak controls, asset granting, two note types, mission management, per-student History, Audit Log, Preview as Student, and real Undo;
 - real JPG/PNG/WebP photo upload with validation, zoom/reposition crop, 512 px WebP optimization, replacement, and removal;
 - no random child photographs; monogram placeholders are the default;
-- custom desktop cursor, reduced-motion support, keyboard focus, mobile bottom navigation, and interaction animations.
+- standard system cursor, reduced-motion support, keyboard focus, mobile bottom navigation, and interaction animations;
+- click-level integration coverage for delegated Admin actions, overlays, XP, rewards, photo crop/save, Preview, theme, student identity, mission flow and leaderboard zero state.
 
 ## Run
 
@@ -49,7 +50,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 
 ## Admin and tracker
 
-Open <http://localhost:4173/admin/tracker> or the compatible local route <http://localhost:4173/#admin>. The static runtime labels the control room honestly: it is a local functional prototype, **not a secure production auth boundary**.
+Open <http://localhost:4173/admin/tracker> or the compatible local route <http://localhost:4173/#admin>. The static runtime labels the control room honestly: it is a local functional prototype, **not a secure production auth boundary**. The Student UI has no Admin shortcut and teammate cards cannot change the active student. The public `#admin` URL remains an intentionally accessible Admin demo URL.
 
 For day-to-day tracking:
 
@@ -61,7 +62,9 @@ For day-to-day tracking:
 6. Use `Preview as Student` to verify the dashboard.
 7. Use the toast's `Undo` action if needed.
 
-Edits persist in `localStorage` under `elu-live-state-v2`. Settings → Reset Season requires typing `RESET SEASON`; it preserves names and photos while returning all results to zero.
+Edits persist in `localStorage` under `elu-live-state-v2` through the versioned `LocalDemoStore` adapter. The demo student session ID is separate from the temporary Admin Preview ID. Settings offers a reversible **Reset demo progress** action; **Reset full season** requires typing `RESET SEASON`.
+
+`LocalDemoStore` exposes the current student, students, profile updates, XP transactions, reward grants, mission updates and submissions behind one adapter. A future `RemoteApiStore` can implement the same responsibilities without coupling UI components directly to browser storage.
 
 ## Student photos
 
@@ -84,7 +87,9 @@ Copy `.env.example` to `.env` only for a future server-backed deployment. Requir
 - the `MEDIA_STORAGE_*` variables;
 - `APP_URL`.
 
-Google OAuth, VK OAuth, a PostgreSQL transaction ledger, private object storage, signed media URLs, server-side role checks, and protected mutation endpoints require those credentials plus a server runtime. They are not claimed as active in this dependency-free local build.
+Google OAuth, VK OAuth, a PostgreSQL transaction ledger, private object storage, signed media URLs, server-side role checks, and protected mutation endpoints require those credentials plus a server runtime. They are not claimed as active in this static demo.
+
+The demo's application-role checks protect UI flows from accidental Student mutations, but JavaScript delivered by GitHub Pages cannot enforce real authorization. Real per-student login, Admin login, cross-device synchronization and a shared source of truth require backend authentication, server-side roles and a shared database.
 
 ## Missions
 
@@ -125,4 +130,4 @@ See [`docs/production-architecture.md`](docs/production-architecture.md) for the
 npm run check
 ```
 
-This runs lint/invariant checks, JavaScript syntax checks, tests, and a production build into `dist/`.
+This runs lint/invariant checks, JavaScript syntax checks, static tests, click-level Happy DOM integration tests, and a production build into `dist/`.
