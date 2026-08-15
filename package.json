@@ -6,8 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
+    "start": "node server/index.mjs",
+    "migrate": "node server/run-migrations.mjs",
+    "provision": "node server/run-provision.mjs",
     "lint": "node scripts/check.mjs",
-    "typecheck": "node --check app.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs",
+    "typecheck": "node --check app.js && node --check auth-provider.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check server/app.mjs && node --check server/config.mjs && node --check server/db.mjs && node --check server/index.mjs && node --check server/provision.mjs",
     "pretest": "npm run build",
     "test": "node --test",
     "build": "node scripts/build.mjs",
@@ -24,7 +27,6 @@
   "dependencies": {
     "argon2": "^0.45.1",
     "connect-pg-simple": "^10.0.0",
-    "csrf-sync": "^4.2.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
     "express-session": "^1.19.0",
