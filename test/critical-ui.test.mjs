@@ -6,14 +6,42 @@ import { Window } from "happy-dom";
 const html = readFileSync("dist/index.html", "utf8");
 const app = readFileSync("dist/app.js", "utf8");
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+const studentUsers = {
+  alena: { id: "user-alena", role: "student", studentId: "alena" },
+  anastasia: { id: "user-anastasia", role: "student", studentId: "anastasia" },
+  egor: { id: "user-egor", role: "student", studentId: "egor" },
+  kirill: { id: "user-kirill", role: "student", studentId: "kirill" }
+};
+const adminUser = { id: "teacher-test", role: "admin", studentId: null };
 
-async function boot(hash = "") {
+function createTestAuthProvider(initialUser = studentUsers.alena) {
+  let session = initialUser ? { user: structuredClone(initialUser) } : null;
+  return {
+    async login(login, password) {
+      await tick();
+      const user = studentUsers[login];
+      if (!user || password !== "integration-only") {
+        const error = new Error("Rejected by test provider");
+        error.code = "invalid_credentials";
+        throw error;
+      }
+      session = { user: structuredClone(user) };
+      return session;
+    },
+    async logout() { session = null; },
+    async getSession() { return session; }
+  };
+}
+
+async function boot(hash = "", { user = studentUsers.alena, provider = createTestAuthProvider(user), legacyStudentId = null } = {}) {
   const window = new Window({ url: `http://localhost:4173/${hash}` });
   window.innerWidth = 1366;
   window.innerHeight = 768;
   window.document.write(html);
   window.document.close();
   window.localStorage.clear();
+  if (legacyStudentId) window.localStorage.setItem("elu-demo-student-id", legacyStudentId);
+  if (provider) window.ELU_AUTH_PROVIDER = provider;
   window.structuredClone = globalThis.structuredClone;
   window.requestAnimationFrame = callback => callback();
   window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -30,6 +58,7 @@ async function boot(hash = "") {
   window.addEventListener("error", event => errors.push(event.error || event.message));
   window.eval(app);
   await tick();
+  await tick();
   return { window, document: window.document, errors };
 }
 
@@ -43,9 +72,110 @@ function change(window, element, value) {
   element.dispatchEvent(new window.Event("change", { bubbles: true }));
 }
 
+function submit(window, form) {
+  form.dispatchEvent(new window.SubmitEvent("submit", { bubbles: true, cancelable: true }));
+}
+
 function savedState(window) {
   return JSON.parse(window.localStorage.getItem("elu-live-state-v2"));
 }
+
+test("no session and direct student URLs render the provider-backed Login Screen", async () => {
+  for (const route of ["profile", "missions", "challenge", "crew", "leaderboard"]) {
+    const { window, document, errors } = await boot(`#${route}`, { user: null });
+    assert.equal(window.location.hash, "#login");
+    assert.ok(document.querySelector("#loginForm"));
+    assert.match(document.querySelector("#view").textContent, /ВХОД В ПРОФИЛЬ/);
+    assert.equal(document.querySelector(".profile-hero"), null);
+    assert.equal(document.querySelectorAll(".student-card").length, 0, "login never exposes profile cards");
+    assert.deepEqual(errors, []);
+    window.close();
+  }
+
+  const unconfigured = await boot("", { user: null, provider: null });
+  assert.match(unconfigured.document.querySelector(".auth-disclaimer").textContent, /BACKEND REQUIRED/);
+  assert.match(unconfigured.document.querySelector(".auth-disclaimer").textContent, /Auth provider не подключён/);
+  unconfigured.window.close();
+});
+
+test("login, student isolation, logout and session restoration use only the auth provider", async () => {
+  const provider = createTestAuthProvider(null);
+  const { window, document, errors } = await boot("", { user: null, provider });
+  const passwordInput = document.querySelector("#loginPassword");
+  change(window, document.querySelector("#loginName"), "unknown");
+  change(window, passwordInput, "wrong");
+  click(window, document.querySelector('[data-action="toggle-password"]'));
+  assert.equal(passwordInput.type, "text");
+  assert.equal(document.querySelector('[data-action="toggle-password"]').getAttribute("aria-label"), "Скрыть пароль");
+  submit(window, document.querySelector("#loginForm"));
+  await tick();
+  await tick();
+  assert.match(document.querySelector("#loginError").textContent, /Неверный логин или пароль/);
+
+  change(window, document.querySelector("#loginName"), "egor");
+  change(window, document.querySelector("#loginPassword"), "integration-only");
+  submit(window, document.querySelector("#loginForm"));
+  assert.match(document.querySelector(".login-submit").textContent, /ВХОДИМ/);
+  await tick();
+  await tick();
+  await tick();
+  assert.equal(window.location.hash, "");
+  assert.equal(window.AuthService.getCurrentUser().studentId, "egor");
+  assert.match(document.querySelector("#miniProfile").textContent, /Егор/);
+
+  const teammateCard = [...document.querySelectorAll(".student-card")].find(card => /Алёна/.test(card.textContent));
+  click(window, teammateCard);
+  assert.equal(window.AuthService.getCurrentUser().studentId, "egor", "Team card cannot switch identity");
+
+  click(window, document.querySelector('[data-route="profile"]'));
+  assert.match(document.querySelector(".profile-name h1").textContent, /Егор/);
+  click(window, document.querySelector('[data-route="missions"]'));
+  click(window, document.querySelector('[data-action="start-mission"]'));
+  const beforeLogout = savedState(window);
+  assert.equal(beforeLogout.weekRecords.egor[0].status, "In Progress");
+  click(window, document.querySelector('[data-route="profile"]'));
+  click(window, document.querySelector('[data-action="logout-request"]'));
+  assert.match(document.querySelector(".logout-modal").textContent, /Выйти из профиля/);
+  click(window, document.querySelector('.logout-modal [data-action="logout-confirm"]'));
+  await tick();
+  await tick();
+  assert.equal(window.location.hash, "#login");
+  assert.equal(window.AuthService.getCurrentUser(), null);
+  assert.equal(window.localStorage.getItem("elu-demo-student-id"), null);
+  assert.deepEqual(savedState(window), beforeLogout, "logout keeps XP, progress, rewards, photos, submissions and history");
+
+  change(window, document.querySelector("#loginName"), "alena");
+  change(window, document.querySelector("#loginPassword"), "integration-only");
+  submit(window, document.querySelector("#loginForm"));
+  await tick();
+  await tick();
+  click(window, document.querySelector('[data-route="profile"]'));
+  assert.match(document.querySelector(".profile-name h1").textContent, /Алёна/);
+  const browserStorage = Object.keys(window.localStorage).map(key => `${key}:${window.localStorage.getItem(key)}`).join("\n");
+  assert.doesNotMatch(browserStorage, /integration-only|wrong/);
+  assert.deepEqual(errors, []);
+  window.close();
+
+  const restored = await boot("#profile", { user: studentUsers.egor });
+  assert.equal(restored.window.AuthService.getCurrentUser().studentId, "egor");
+  assert.match(restored.document.querySelector(".profile-name h1").textContent, /Егор/);
+  restored.window.close();
+});
+
+test("legacy identity injection is ignored and a student cannot enter Admin", async () => {
+  const isolated = await boot("#profile", { user: studentUsers.alena, legacyStudentId: "egor" });
+  assert.equal(isolated.window.localStorage.getItem("elu-demo-student-id"), null);
+  assert.equal(isolated.window.AuthService.getCurrentUser().studentId, "alena");
+  assert.match(isolated.document.querySelector(".profile-name h1").textContent, /Алёна/);
+  assert.doesNotMatch(isolated.document.querySelector(".profile-name h1").textContent, /Егор/);
+  isolated.window.close();
+
+  const blockedAdmin = await boot("#admin", { user: studentUsers.alena });
+  assert.equal(blockedAdmin.window.location.hash, "#login");
+  assert.equal(blockedAdmin.document.querySelector(".admin-shell"), null);
+  assert.match(blockedAdmin.document.querySelector("#loginError").textContent, /Admin/);
+  blockedAdmin.window.close();
+});
 
 test("Challenge click opens Week 1 mission detail and locked Week 2 stays closed", async () => {
   const { window, document, errors } = await boot();
@@ -115,7 +245,7 @@ test("student UI is read-only and mission/leaderboard zero-state flows work", as
 });
 
 test("Admin delegated controls, nested overlays, XP, reward, photo and preview work", async () => {
-  const { window, document, errors } = await boot("#admin");
+  const { window, document, errors } = await boot("#admin", { user: adminUser });
   const quick = () => document.querySelector('button.btn[data-student="alena"]');
 
   click(window, quick());
@@ -201,7 +331,8 @@ test("Admin delegated controls, nested overlays, XP, reward, photo and preview w
   change(window, document.querySelector("#previewStudentSelect"), "egor");
   click(window, document.querySelector('[data-action="preview-selected"]'));
   assert.match(document.querySelector("#previewBanner").textContent, /ЕГОР/);
-  assert.equal(window.localStorage.getItem("elu-demo-student-id"), "alena");
+  assert.equal(window.localStorage.getItem("elu-demo-student-id"), null);
+  assert.equal(window.AuthService.getCurrentUser().id, adminUser.id);
   click(window, document.querySelector('[data-action="exit-preview"]'));
   assert.equal(window.location.hash, "#admin");
 
@@ -244,7 +375,7 @@ test("all Student and Admin screens render at 1366x768 in Dark and Light themes"
 
     window.history.replaceState(null, "", "#admin");
     window.close();
-    const adminBoot = await boot("#admin");
+    const adminBoot = await boot("#admin", { user: adminUser });
     if (expectedTheme === "light") click(adminBoot.window, adminBoot.document.querySelector(".admin-bar .theme-toggle"));
     assert.equal(adminBoot.document.documentElement.dataset.theme, expectedTheme);
     for (const tab of adminTabs) {

@@ -43,7 +43,7 @@ const seedState = () => ({
 
 const STORAGE_KEY="elu-live-state-v2";
 const STORAGE_VERSION=3;
-const SESSION_KEY="elu-demo-student-id";
+const LEGACY_SESSION_KEY="elu-demo-student-id";
 
 function migrateState(raw={}){
  const base=seedState(),next={...base,...raw,schemaVersion:STORAGE_VERSION};
@@ -58,7 +58,7 @@ function migrateState(raw={}){
 const LocalDemoStore={
  load(){try{const saved=localStorage.getItem(STORAGE_KEY);return saved?migrateState(JSON.parse(saved)):seedState()}catch(error){console.warn("State could not be loaded",error);return seedState()}},
  save(next){localStorage.setItem(STORAGE_KEY,JSON.stringify({...next,schemaVersion:STORAGE_VERSION}))},
- getCurrentStudent(next,id){return next.students.find(student=>student.id===id)||next.students[0]},
+ getCurrentStudent(next,id){return next.students.find(student=>student.id===id)||null},
  getStudents(next){return next.students},
  updateStudent(next,id,patch){Object.assign(next.students.find(student=>student.id===id),patch)},
  addXpTransaction(next,id,transaction){next.students.find(student=>student.id===id).transactions.push(transaction)},
@@ -68,7 +68,7 @@ const LocalDemoStore={
 };
 
 let state=LocalDemoStore.load();
-let route="home";
+let route="login";
 let adminTab="tracker";
 let lastUndo=null;
 let uploadDraft=null;
@@ -77,11 +77,36 @@ let adminPreviewStudentId=null;
 let activeStudentDrawer=null;
 let overlayReturnDrawer=null;
 let overlayOpener=null;
-let currentStudentId=localStorage.getItem(SESSION_KEY);
-if(!seedStudents.some(student=>student.id===currentStudentId))currentStudentId="alena";
-localStorage.setItem(SESSION_KEY,currentStudentId);
+let authSession=null;
+let authReady=false;
+let loginPending=false;
+let loginMessage="";
+let pendingRoute=null;
+let currentStudentId=null;
+localStorage.removeItem(LEGACY_SESSION_KEY);
 const THEME_KEY="elu-theme";
 let theme=localStorage.getItem(THEME_KEY)==="light"?"light":"dark";
+
+function authError(code){const error=new Error(code);error.code=code;return error}
+function normalizeAuthSession(session){
+ if(!session)return null;
+ const user=session.user||session;
+ if(!user||!user.id||!["student","admin"].includes(user.role))throw authError("invalid_session");
+ if(user.role==="student"&&!seedStudents.some(student=>student.id===user.studentId))throw authError("invalid_session");
+ return {...session,user:{id:String(user.id),role:user.role,studentId:user.role==="student"?user.studentId:null}};
+}
+function useAuthSession(session){authSession=normalizeAuthSession(session);const user=authSession?.user;currentStudentId=user?.role==="student"?user.studentId:null}
+const AuthService={
+ provider(){return window.ELU_AUTH_PROVIDER||null},
+ isConfigured(){const provider=this.provider();return Boolean(provider&&typeof provider.login==="function"&&typeof provider.logout==="function"&&typeof provider.getSession==="function")},
+ async login(login,password){const provider=this.provider();if(!this.isConfigured())throw authError("not_configured");const result=await provider.login(login,password);return normalizeAuthSession(result||await provider.getSession())},
+ async logout(){const provider=this.provider();try{if(provider&&typeof provider.logout==="function")await provider.logout()}finally{useAuthSession(null);localStorage.removeItem(LEGACY_SESSION_KEY)}},
+ async getSession(){const provider=this.provider();if(!provider||typeof provider.getSession!=="function")return null;return normalizeAuthSession(await provider.getSession())},
+ getCurrentUser(){return authSession?.user||null},
+ requireStudent(){return this.getCurrentUser()?.role==="student"&&Boolean(currentStudentId)},
+ requireAdmin(){return this.getCurrentUser()?.role==="admin"}
+};
+window.AuthService=AuthService;
 
 const navItems=[
   ["home","Главная","i-home"],["challenge","Челлендж","i-zap"],["missions","Миссии","i-target"],["crew","Команда","i-users"],
@@ -97,11 +122,12 @@ function completedCount(student){return (state.completions[student.id]||[]).leng
 function rankedStudents(){return [...state.students].sort((a,b)=>totalXp(b)-totalXp(a)||completedCount(b)-completedCount(a)||a.name.localeCompare(b.name,"ru"))}
 function rankFor(student){if(!hasLeaderboardStarted()||totalXp(student)<=0)return null;return 1+state.students.filter(other=>totalXp(other)>totalXp(student)).length}
 function crewPower(){return state.students.reduce((sum,s)=>sum+totalXp(s),0)}
-function currentStudent(){return LocalDemoStore.getCurrentStudent(state,currentStudentId)}
-function viewer(){return adminPreviewStudentId?studentById(adminPreviewStudentId):currentStudent()}
-function isPreviewMode(){return Boolean(adminPreviewStudentId)}
-function isAdminMode(){return route==="admin"&&!isPreviewMode()}
-function requireAdminMutation(){if(isAdminMode())return true;toast("Изменения доступны только в Admin demo");return false}
+function currentStudent(){return AuthService.requireStudent()?LocalDemoStore.getCurrentStudent(state,currentStudentId):null}
+function isPreviewMode(){return AuthService.requireAdmin()&&Boolean(adminPreviewStudentId)}
+function viewer(){return isPreviewMode()?studentById(adminPreviewStudentId):currentStudent()}
+function isStudentContext(){return AuthService.requireStudent()||isPreviewMode()}
+function isAdminMode(){return route==="admin"&&AuthService.requireAdmin()&&!isPreviewMode()}
+function requireAdminMutation(){if(isAdminMode())return true;toast("Действие доступно только роли Admin");return false}
 function effectsOn(){return state.effectsMode!=="off"}
 function fullEffects(){return state.effectsMode==="full"}
 function hasXp(student){return totalXp(student)!==0}
@@ -135,8 +161,23 @@ function renderChrome(){
   if(isPreviewMode()){banner.classList.remove("hidden");banner.innerHTML=`ПРОСМОТР КАК <strong>${escapeHtml(s.name).toUpperCase()}</strong><button data-action="exit-preview">Вернуться в Admin</button>`}else banner.classList.add("hidden");
 }
 
-function go(next){route=next;const target=next==="home"?new URL(".",APP_BASE):new URL(`#${next}`,APP_BASE);history.replaceState(null,"",target);render()}
-function render(){renderNav();renderChrome();applyPreferences();const view=document.querySelector("#view");const renderer={home:renderHome,challenge:renderChallenge,missions:renderMissions,crew:renderCrew,events:renderEvents,leaderboard:renderLeaderboard,feed:renderFeed,profile:renderProfile,admin:renderAdmin}[route]||renderHome;view.innerHTML=`<div class="page-enter">${renderer()}</div>`;view.focus({preventScroll:true});requestAnimationFrame(setupEnhancements)}
+const studentRoutes=["home","challenge","missions","crew","events","leaderboard","feed","profile"];
+function setRouteUrl(next){const target=next==="home"?new URL(".",APP_BASE):new URL(`#${next}`,APP_BASE);history.replaceState(null,"",target)}
+function go(next){
+ if(next==="admin"&&!AuthService.requireAdmin()){pendingRoute="admin";loginMessage="Для Admin требуется отдельная авторизованная сессия.";route="login";setRouteUrl("login");render();return false}
+ if(studentRoutes.includes(next)&&!isStudentContext()){pendingRoute=next;loginMessage="Войди в профиль, чтобы продолжить.";route="login";setRouteUrl("login");render();return false}
+ route=next;setRouteUrl(next);render();return true
+}
+function renderLogin(){const providerReady=AuthService.isConfigured();return `<section class="login-screen animated-stage"><div class="login-festival" aria-hidden="true"><i></i><i></i><i></i><span>⚡</span><span>✦</span><span>♫</span></div><div class="login-brand"><div class="login-live"><b></b> ELU LIVE</div><h1>ENGLISH<br><em>LEVEL UP</em></h1><p>Speak. Learn. Shine.</p></div><form class="login-card" id="loginForm" novalidate><div class="eyebrow">ВХОД В ПРОФИЛЬ</div><h2>С возвращением!</h2><p>Введи персональные данные, выданные преподавателем.</p><label class="login-field"><span>Логин</span><input class="form-control" id="loginName" name="login" type="text" autocomplete="username" required ${loginPending?'disabled':''}></label><label class="login-field"><span>Пароль</span><span class="password-control"><input class="form-control" id="loginPassword" name="password" type="password" autocomplete="current-password" required ${loginPending?'disabled':''}><button type="button" class="password-toggle" data-action="toggle-password" aria-label="Показать пароль" aria-pressed="false">${icon('i-eye')}</button></span></label><div class="login-error ${loginMessage?'':'hidden'}" id="loginError" role="alert">${escapeHtml(loginMessage)}</div><button class="btn btn-primary login-submit" type="submit" ${loginPending?'disabled aria-disabled="true"':''}>${loginPending?'ВХОДИМ…':'ВОЙТИ'}</button><div class="auth-disclaimer"><b>${providerReady?'SECURE SESSION':'BACKEND REQUIRED'}</b><span>${providerReady?'Credentials проверяет подключённый auth provider.':'Auth provider не подключён. GitHub Pages показывает только готовый frontend входа.'}</span></div><small>Пароль не сохраняется в браузере и не попадает в LocalDemoStore.</small></form><button class="icon-btn theme-toggle login-theme" data-action="toggle-theme" aria-label="Переключить тему"><span aria-hidden="true">${theme==="light"?'☾':'☀'}</span></button></section>`}
+function render(){
+ const view=document.querySelector("#view");applyPreferences();
+ const locked=route==="login"||!authReady,adminOnly=route==="admin"&&AuthService.requireAdmin()&&!isPreviewMode();
+ document.body.classList.toggle("session-locked",locked);document.body.classList.toggle("admin-session",adminOnly);
+ if(locked){document.querySelector("#mainNav").innerHTML="";document.querySelector("#bottomNav").innerHTML="";document.querySelector("#previewBanner").classList.add("hidden");view.innerHTML=authReady?renderLogin():`<section class="auth-loading" aria-live="polite"><span>ELU LIVE</span><strong>Проверяем сессию…</strong></section>`;view.querySelector("#loginName")?.focus({preventScroll:true});return}
+ if(adminOnly){document.querySelector("#mainNav").innerHTML="";document.querySelector("#bottomNav").innerHTML="";document.querySelector("#previewBanner").classList.add("hidden")}else{renderNav();renderChrome()}
+ const renderer={home:renderHome,challenge:renderChallenge,missions:renderMissions,crew:renderCrew,events:renderEvents,leaderboard:renderLeaderboard,feed:renderFeed,profile:renderProfile,admin:renderAdmin}[route];
+ if(!renderer){go("login");return}view.innerHTML=`<div class="page-enter">${renderer()}</div>`;view.focus({preventScroll:true});requestAnimationFrame(setupEnhancements)
+}
 
 function weekState(w){if((state.completions[viewer().id]||[]).includes(w.number))return "completed";if(w.number===state.currentWeek)return "active";if(w.number>state.currentWeek)return "locked";return "available"}
 function openMission(weekNumber){const week=weeks[Number(weekNumber)-1];if(!week||weekState(week)==="locked"){toast("🔒 Эта неделя пока закрыта");return false}selectedMissionWeek=week.number;go("missions");return true}
@@ -170,9 +211,9 @@ function renderCrew(){const crew=crewPower(),pct=clamp(crew/state.crewGoal*100,0
 function renderEvents(){return `${pageHeader("Live events","События сезона и путь к Main Stage")}<div class="events-grid">${state.events.map((e,i)=>`<article class="panel event-card"><div class="event-row"><span class="event-icon">${e.icon}</span><div><div class="eyebrow">${e.status}</div><h2>${escapeHtml(e.title)}</h2><small>${escapeHtml(e.date)}</small></div></div><p>Награда · ${escapeHtml(e.reward)}</p>${i===0?`<button class="btn btn-primary btn-compact" data-action="event-info" data-id="${e.id}">Подробнее</button>`:`<span class="info-chip">🔒 Закрыто</span>`}</article>`).join("")}</div>`}
 function renderLeaderboard(){return `${pageHeader("Рейтинг","Появится после первых XP")}<div class="tabs" aria-label="Доступные виды рейтинга"><span class="tab active">Total XP</span><span class="tab">Weekly XP · скоро</span><span class="tab">Streak · скоро</span><span class="tab">Teamwork · скоро</span></div><article class="panel leaderboard-panel"><div class="leader-list">${leaderList(false)}</div></article>`}
 function renderFeed(){return `${pageHeader("Crew feed","Живой сезон без публичных комментариев")}<article class="panel"><div class="feed-list">${feedList()}</div></article>`}
-function renderProfile(){const s=viewer(),rank=rankFor(s);return `${pageHeader("Профиль",isPreviewMode()?"Admin preview · режим только для чтения":"Твой сезон, награды и прогресс")}<article class="panel profile-hero" style="--accent:${s.accent}">${avatarHtml(s)}<div class="profile-name"><h1>${escapeHtml(s.name)}</h1><p>${escapeHtml(s.nickname)} · B1 · Level ${s.level}</p><div class="sticker-row">${s.stickers.length?s.stickers.map(x=>`<span class="sticker">${escapeHtml(x)}</span>`).join(""):'<span class="empty-chip">Награды появятся после первых миссий</span>'}</div></div><div class="profile-stats"><div class="profile-stat"><span>Total XP</span><b>${fmt(totalXp(s))}</b></div><div class="profile-stat"><span>Стрик</span><b>${s.streak}${s.streak?' 🔥':''}</b></div><div class="profile-stat"><span>Позиция</span><b>${rank?`#${rank}`:"—"}</b></div></div></article><div class="profile-layout"><article class="panel"><h3>Прогресс сезона</h3><div class="season-list">${weeks.map(w=>{const done=(state.completions[s.id]||[]).includes(w.number),active=w.number===state.currentWeek;return `<div class="season-row"><strong>${w.number}</strong><span>${w.title}<small>${w.mission}</small></span><div class="progress" style="--progress:${done?100:active?s.progress:0}%"><i></i></div><b>${statusLabel(done?'completed':active?s.weekStatus:'locked')}</b></div>`}).join("")}</div></article><aside class="content-stack"><article class="panel rewards-panel"><h3>Моя коллекция</h3>${s.inventory.length?`<div class="reward-collection">${s.inventory.map(id=>{const a=assetById(id);return `<button class="asset-mini" data-asset="${id}">${assetImg(a)}<span>${a.name}</span></button>`}).join("")}</div>`:`<div class="zero-state reward-empty">${assetImg(assetById('ticket'))}<strong>Твои первые награды появятся после выполнения миссий.</strong><small>Начни Week 1, чтобы открыть Ticket</small></div>`}</article>${s.featuredBadge?`<article class="panel"><h3>Featured Badge</h3><div class="featured-reward">${assetImg(assetById('badge'))}<div><strong>${escapeHtml(s.featuredBadge)}</strong><p>Особая награда сезона</p></div></div></article>`:""}${s.feedback?`<article class="panel"><h3>Комментарий преподавателя</h3><p>${escapeHtml(s.feedback)}</p></article>`:""}</aside></div>`}
+function renderProfile(){const s=viewer(),rank=rankFor(s);return `${pageHeader("Профиль",isPreviewMode()?"Admin preview · режим только для чтения":"Твой сезон, награды и прогресс")}<article class="panel profile-hero" style="--accent:${s.accent}">${avatarHtml(s)}<div class="profile-name"><h1>${escapeHtml(s.name)}</h1><p>${escapeHtml(s.nickname)} · B1 · Level ${s.level}</p><div class="sticker-row">${s.stickers.length?s.stickers.map(x=>`<span class="sticker">${escapeHtml(x)}</span>`).join(""):'<span class="empty-chip">Награды появятся после первых миссий</span>'}</div></div><div class="profile-account-actions">${isPreviewMode()?'':`<button class="btn btn-secondary profile-logout" data-action="logout-request">${icon('i-log-out')} Выйти</button>`}<div class="profile-stats"><div class="profile-stat"><span>Total XP</span><b>${fmt(totalXp(s))}</b></div><div class="profile-stat"><span>Стрик</span><b>${s.streak}${s.streak?' 🔥':''}</b></div><div class="profile-stat"><span>Позиция</span><b>${rank?`#${rank}`:"—"}</b></div></div></div></article><div class="profile-layout"><article class="panel"><h3>Прогресс сезона</h3><div class="season-list">${weeks.map(w=>{const done=(state.completions[s.id]||[]).includes(w.number),active=w.number===state.currentWeek;return `<div class="season-row"><strong>${w.number}</strong><span>${w.title}<small>${w.mission}</small></span><div class="progress" style="--progress:${done?100:active?s.progress:0}%"><i></i></div><b>${statusLabel(done?'completed':active?s.weekStatus:'locked')}</b></div>`}).join("")}</div></article><aside class="content-stack"><article class="panel rewards-panel"><h3>Моя коллекция</h3>${s.inventory.length?`<div class="reward-collection">${s.inventory.map(id=>{const a=assetById(id);return `<button class="asset-mini" data-asset="${id}">${assetImg(a)}<span>${a.name}</span></button>`}).join("")}</div>`:`<div class="zero-state reward-empty">${assetImg(assetById('ticket'))}<strong>Твои первые награды появятся после выполнения миссий.</strong><small>Начни Week 1, чтобы открыть Ticket</small></div>`}</article>${s.featuredBadge?`<article class="panel"><h3>Featured Badge</h3><div class="featured-reward">${assetImg(assetById('badge'))}<div><strong>${escapeHtml(s.featuredBadge)}</strong><p>Особая награда сезона</p></div></div></article>`:""}${s.feedback?`<article class="panel"><h3>Комментарий преподавателя</h3><p>${escapeHtml(s.feedback)}</p></article>`:""}</aside></div>`}
 
-function renderAdmin(){const tabs=[["tracker","Трекер"],["matrix","Матрица 8 недель"],["lesson","Режим урока"],["missions","Миссии"],["assets","Награды"],["events","События"],["audit","Журнал"],["media","Медиа"],["settings","Настройки"]];return `<section class="admin-shell"><header class="admin-bar"><div><h1>ELU Control Room</h1><p>Управление челленджем и прогрессом группы</p><span class="demo-note"><b>DEMO ADMIN</b> · локальные данные этого браузера</span></div><div class="admin-actions"><button class="btn btn-secondary btn-compact" data-action="preview-menu">${icon('i-eye')} Preview</button><button class="icon-btn theme-toggle" data-action="toggle-theme" aria-label="Переключить тему"><span aria-hidden="true">${theme==="light"?'☾':'☀'}</span></button><button class="btn btn-primary btn-compact" data-route="home">Student App →</button></div></header><div class="admin-content"><nav class="admin-tabs">${tabs.map(([id,label])=>`<button class="admin-tab ${adminTab===id?'active':''}" data-admin-tab="${id}">${label}</button>`).join("")}</nav>${renderAdminTab()}</div></section>`}
+function renderAdmin(){const tabs=[["tracker","Трекер"],["matrix","Матрица 8 недель"],["lesson","Режим урока"],["missions","Миссии"],["assets","Награды"],["events","События"],["audit","Журнал"],["media","Медиа"],["settings","Настройки"]];return `<section class="admin-shell"><header class="admin-bar"><div><h1>ELU Control Room</h1><p>Управление челленджем и прогрессом группы</p><span class="demo-note"><b>ADMIN SESSION</b> · UI role guard; server authorization required</span></div><div class="admin-actions"><button class="btn btn-secondary btn-compact" data-action="preview-menu">${icon('i-eye')} Preview</button><button class="icon-btn theme-toggle" data-action="toggle-theme" aria-label="Переключить тему"><span aria-hidden="true">${theme==="light"?'☾':'☀'}</span></button></div></header><div class="admin-content"><nav class="admin-tabs">${tabs.map(([id,label])=>`<button class="admin-tab ${adminTab===id?'active':''}" data-admin-tab="${id}">${label}</button>`).join("")}</nav>${renderAdminTab()}</div></section>`}
 function renderAdminTab(){
  if(adminTab==="matrix")return renderMatrix();
  if(adminTab==="lesson")return renderLessonMode();
@@ -222,6 +263,7 @@ function openResetSeason(){document.querySelector("#modalRoot").innerHTML=`<div 
 function openMissionEditor(id=null){const m=id?state.missions.find(x=>x.id===id):{id:"",week:state.currentWeek,title:"",description:"",instructions:"",baseXp:100,bonusXp:0,submissionType:"link",active:true};document.querySelector("#modalRoot").innerHTML=`<div class="modal-backdrop" data-overlay-backdrop><div class="modal"><div class="modal-head"><h2>${id?'Edit':'Create'} mission</h2><button class="close-button" data-action="close-overlay" aria-label="Закрыть">×</button></div><div class="form-grid"><div class="form-field"><label>Week</label><input class="form-control" id="missionWeek" type="number" min="1" max="8" value="${m.week}"></div><div class="form-field"><label>Base XP</label><input class="form-control" id="missionXp" type="number" value="${m.baseXp}"></div><div class="form-field full"><label>Title</label><input class="form-control" id="missionTitle" value="${escapeHtml(m.title)}"></div><div class="form-field full"><label>Description</label><textarea class="form-control" id="missionDescription">${escapeHtml(m.description)}</textarea></div><div class="form-field full"><label>Instructions / bonus</label><textarea class="form-control" id="missionInstructions">${escapeHtml(m.instructions)}</textarea></div><div class="form-field"><label>Bonus XP</label><input class="form-control" id="missionBonusXp" type="number" value="${m.bonusXp}"></div><div class="form-field"><label>Submission type</label><select class="form-control" id="missionSubmission">${["text","audio","image","file","link"].map(x=>`<option ${m.submissionType===x?'selected':''}>${x}</option>`).join("")}</select></div></div><div class="modal-actions"><button class="btn btn-secondary" data-action="close-overlay">Cancel</button><button class="btn btn-primary" data-action="save-mission" data-id="${m.id}">Save mission</button></div></div></div>`}
 function openAsset(id){const a=assetById(id),interactive={"power-card":"FLIP CARD","access-key":"UNLOCK","drop":"OPEN DROP","badge":"REVEAL BADGE","spotlight":"ACTIVATE SPOTLIGHT"}[id];document.querySelector("#modalRoot").innerHTML=`<div class="modal-backdrop asset-modal-${id}" data-overlay-backdrop><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="eyebrow">GAME ASSET · ${a.meaning}</div><h2>${a.name}</h2></div><button class="close-button" data-action="close-overlay" aria-label="Закрыть">×</button></div><div class="asset-showcase ${id}" id="assetShowcase"><div class="asset-face">${assetImg(a,"eager","asset-modal-visual")}</div><div class="asset-back"><strong>${a.name}</strong><p>${a.description}</p><small>Reward · +100 XP</small></div></div><p style="color:var(--muted);line-height:1.65">${a.description}</p>${interactive?`<button class="btn btn-primary" data-action="activate-asset" data-asset-id="${id}">${interactive}</button>`:`<button class="btn btn-primary" data-action="close-overlay">Got it</button>`}</div></div>`}
 function openPreviewMenu(){const s=state.students[0];document.querySelector("#modalRoot").innerHTML=`<div class="modal-backdrop" data-overlay-backdrop><div class="modal preview-modal"><div class="modal-head"><div><div class="eyebrow">DEMO PREVIEW</div><h2>Preview as Student</h2></div><button class="close-button" data-action="close-overlay" aria-label="Закрыть">×</button></div><p>Выберите ученика. Режим просмотра не меняет его данные.</p><div class="preview-card">${avatarHtml(s)}<div><strong id="previewName">${escapeHtml(s.name)}</strong><small id="previewHandle">${escapeHtml(s.nickname)}</small></div><select class="form-control" id="previewStudentSelect" aria-label="Выбрать ученика">${state.students.map(x=>`<option value="${x.id}">${escapeHtml(x.name)} · ${escapeHtml(x.nickname)}</option>`).join("")}</select><button class="btn btn-primary" data-action="preview-selected">ПОСМОТРЕТЬ КАК УЧЕНИК</button></div></div></div>`}
+function openLogoutConfirm(){document.querySelector("#modalRoot").innerHTML=`<div class="modal-backdrop" data-overlay-backdrop><div class="modal compact-modal logout-modal"><div class="modal-head"><div><div class="eyebrow">STUDENT SESSION</div><h2>Выйти из профиля?</h2></div><button class="close-button" data-action="close-overlay" aria-label="Закрыть">×</button></div><p>Ты сможешь снова войти в свой профиль на стартовом экране.</p><div class="modal-actions"><button class="btn btn-secondary" data-action="close-overlay">Отмена</button><button class="btn btn-danger" data-action="logout-confirm">${icon('i-log-out')} Выйти</button></div></div></div>`}
 
 function openPhoto(id){const s=studentById(id);uploadDraft={studentId:id,source:s.photo||null,zoom:1,x:50,y:50};document.querySelector("#modalRoot").innerHTML=`<div class="modal-backdrop" data-overlay-backdrop><div class="modal photo-modal"><div class="modal-head"><div><div class="eyebrow">PRIVATE STUDENT MEDIA</div><h2>Фото · ${escapeHtml(s.name)}</h2></div><button class="close-button" data-action="close-overlay" aria-label="Закрыть">×</button></div><label class="upload-zone"><input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><b>${icon('i-upload')} Выбрать JPG, PNG или WebP</b><br><small>до 8 MB · фото оптимизируется, EXIF удаляется · данные остаются в этом браузере</small></label><div id="cropArea">${photoCropHtml(uploadDraft.source)}</div></div></div>`}
 function photoCropHtml(src){if(!src)return `<div class="empty-state"><strong>Фото пока не выбрано</strong>Будет использован безопасный фирменный placeholder.</div><div class="modal-actions"><button class="btn btn-secondary" data-action="close-overlay">Отмена</button></div>`;return `<div class="crop-layout"><div><div class="crop-stage" id="cropStage"><img src="${src}" alt="Предпросмотр кадрирования"></div><label class="range-field"><span>Zoom</span><input type="range" min="1" max="2.5" value="${uploadDraft.zoom}" step=".05" data-crop="zoom"></label><label class="range-field"><span>По X</span><input type="range" min="0" max="100" value="${uploadDraft.x}" data-crop="x"></label><label class="range-field"><span>По Y</span><input type="range" min="0" max="100" value="${uploadDraft.y}" data-crop="y"></label></div><div class="crop-previews"><div><small>Карточка</small><div class="crop-preview round"><img src="${src}" alt="Круглый preview"></div></div><div><small>Профиль</small><div class="crop-preview square"><img src="${src}" alt="Квадратный preview"></div></div></div></div><div class="modal-actions"><button class="btn btn-danger" data-action="remove-photo" data-id="${uploadDraft.studentId}">Удалить фото</button><button class="btn btn-secondary" data-action="close-overlay">Отмена</button><button class="btn btn-primary" data-action="save-photo">Сохранить фото</button></div>`}
@@ -230,7 +272,7 @@ function processPhoto(file){if(!file)return;if(!["image/jpeg","image/png","image
 function makeCroppedPhoto(callback){const img=new Image();img.onload=()=>{const size=512,canvas=document.createElement("canvas"),ctx=canvas.getContext("2d");canvas.width=canvas.height=size;const scale=Math.max(size/img.width,size/img.height)*uploadDraft.zoom;const dw=img.width*scale,dh=img.height*scale,maxX=Math.max(0,dw-size),maxY=Math.max(0,dh-size),dx=-maxX*(uploadDraft.x/100),dy=-maxY*(uploadDraft.y/100);ctx.drawImage(img,dx,dy,dw,dh);callback(canvas.toDataURL("image/webp",.84))};img.src=uploadDraft.source}
 function showLevelUp(s){if(!effectsOn())return;const el=document.createElement("div");el.className="level-up-overlay";el.innerHTML=`<span>LEVEL UP</span><strong>${s.level}</strong><small>${escapeHtml(s.name)}</small>`;document.body.append(el);setTimeout(()=>el.remove(),1500)}
 
-document.addEventListener("click",e=>{
+document.addEventListener("click",async e=>{
  if(e.target.matches("[data-overlay-backdrop]")){closeOverlay();return}
  const routeBtn=e.target.closest("[data-route]");if(routeBtn){go(routeBtn.dataset.route);return}
  const student=e.target.closest("[data-student]");if(student){if(!isAdminMode())return;overlayOpener=student;openStudent(student.dataset.student);return}
@@ -238,7 +280,10 @@ document.addEventListener("click",e=>{
  const admin=e.target.closest("[data-admin-tab]");if(admin){if(!isAdminMode())return;adminTab=admin.dataset.adminTab;render();return}
  const btn=e.target.closest("[data-action]");if(!btn)return;const id=btn.dataset.id,action=btn.dataset.action;
  if(action==="toggle-theme"){theme=theme==="dark"?"light":"dark";applyTheme();toast(`Тема: ${theme==="light"?'Light':'Dark'}`)}
+ if(action==="toggle-password"){const input=document.querySelector("#loginPassword");if(!input)return;const show=input.type==="password";input.type=show?"text":"password";btn.setAttribute("aria-pressed",String(show));btn.setAttribute("aria-label",show?"Скрыть пароль":"Показать пароль");return}
  if(action==="close-overlay"){closeOverlay();return}
+ if(action==="logout-request"){if(!AuthService.requireStudent())return;overlayOpener=btn;openLogoutConfirm();return}
+ if(action==="logout-confirm"){await AuthService.logout();adminPreviewStudentId=null;pendingRoute=null;loginMessage="";closeOverlay(true);route="login";setRouteUrl("login");render();return}
  if(action==="toggle-sound"){state.sound=!state.sound;saveState();toast(`Sound effects: ${state.sound?'On':'Off'}`)}
  if(action==="open-current-mission")openMission(state.currentWeek)
  if(action==="start-mission"){if(isPreviewMode())return toast("Preview работает только для чтения");const s=currentStudent(),week=Number(btn.dataset.week||selectedMissionWeek),record=state.weekRecords[s.id][week-1];if(record.status!=="Not Started")return;commit("Mission started",`${s.name} · Week ${week}: В процессе`,()=>{record.status="In Progress";record.progress=0;if(week===state.currentWeek){s.weekStatus="In Progress";s.progress=0}addHistory(s,"Mission started",`Week ${week} · ${weeks[week-1].title}`);state.feed.unshift({icon:"▶️",text:`${s.name} начал(а) ${weeks[week-1].title}`,time:"только что"})},{admin:false})}
@@ -275,6 +320,16 @@ document.addEventListener("click",e=>{
  if(action.startsWith("bulk-")){const ids=[...document.querySelectorAll("[data-select-student]:checked")].map(x=>x.dataset.selectStudent);if(!ids.length)return toast("Сначала выберите учеников");if(action==="bulk-complete")commit("Bulk complete",`${ids.length} students · Week ${state.currentWeek}`,()=>ids.forEach(studentId=>{const s=studentById(studentId),record=state.weekRecords[studentId][state.currentWeek-1];if(!state.completions[studentId].includes(state.currentWeek))state.completions[studentId].push(state.currentWeek);record.status="Completed";record.progress=100;s.weekStatus="Completed";s.progress=100;addHistory(s,"Mission completed",`Bulk · Week ${state.currentWeek}`)}));else if(action==="bulk-xp"){const amount=Number(prompt("XP amount for selected students","50")),reason=amount?prompt("Reason (required)","Teacher Bonus"):null;if(amount&&reason)commit("Bulk XP",`${amount>0?'+':''}${amount} XP · ${ids.length} students`,()=>ids.forEach(studentId=>{const s=studentById(studentId);s.transactions.push({id:crypto.randomUUID(),studentId,amount,reason,week:state.currentWeek,createdBy:"admin",date:new Date().toISOString()});s.level=Math.max(1,Math.floor(Math.max(0,totalXp(s))/500)+1);addHistory(s,"Bulk XP",`${amount>0?'+':''}${amount} · ${reason}`)}))}else if(action==="bulk-asset"){const assetId=prompt(`Asset id: ${assets.map(a=>a.id).join(', ')}`,"ticket");if(assetById(assetId))commit("Bulk asset",`${assetId} · ${ids.length} students`,()=>ids.forEach(studentId=>{const s=studentById(studentId);if(!s.inventory.includes(assetId))s.inventory.push(assetId);addHistory(s,"Bulk asset",assetById(assetId).name)}))}else commit("Bulk reset",`${ids.length} students`,()=>ids.forEach(studentId=>{const s=studentById(studentId);s.weekStatus="Not Started";s.progress=0;state.weekRecords[studentId][state.currentWeek-1]={week:state.currentWeek,status:"Not Started",progress:0,asset:null}}))}
 });
 
+function loginErrorText(error){if(error?.code==="invalid_credentials")return "Неверный логин или пароль";if(error?.code==="not_configured")return "Сервис входа пока не подключён. Нужен production auth provider.";return "Не удалось подключиться. Проверь интернет и попробуй ещё раз."}
+document.addEventListener("submit",async e=>{
+ if(e.target.id!=="loginForm")return;e.preventDefault();if(loginPending)return;
+ const login=e.target.elements.login.value.trim(),password=e.target.elements.password.value;
+ if(!login||!password){loginMessage="Введи логин и пароль";render();return}
+ loginPending=true;loginMessage="";render();
+ try{const session=await AuthService.login(login,password);useAuthSession(session);const user=AuthService.getCurrentUser();loginPending=false;loginMessage="";const target=user.role==="admin"?"admin":studentRoutes.includes(pendingRoute)&&pendingRoute!=="admin"?pendingRoute:"home";pendingRoute=null;go(target)}
+ catch(error){loginPending=false;loginMessage=loginErrorText(error);render()}
+});
+
 document.addEventListener("change",e=>{
  if(e.target.id==="photoInput")processPhoto(e.target.files[0]);
  if(e.target.id==="previewStudentSelect"){const s=studentById(e.target.value),card=document.querySelector(".preview-card");card.querySelector(".avatar").outerHTML=avatarHtml(s);document.querySelector("#previewName").textContent=s.name;document.querySelector("#previewHandle").textContent=s.nickname}
@@ -290,5 +345,14 @@ document.addEventListener("pointermove",e=>{if(!fullEffects()||!matchMedia("(poi
 document.addEventListener("pointerout",e=>{const card=e.target.closest(".tilt-card,.week-card,.asset-card");if(card&&!card.contains(e.relatedTarget)){card.style.removeProperty("--tilt-x");card.style.removeProperty("--tilt-y")}});
 document.addEventListener("error",e=>{if(e.target instanceof HTMLImageElement&&e.target.hasAttribute("data-fallback")){e.target.hidden=true;e.target.nextElementSibling?.classList.add("show")}},true);
 
-const hash=location.hash.slice(1);if(location.pathname.startsWith("/admin")||hash==="admin")route="admin";else if(["home","challenge","missions","crew","events","leaderboard","feed","profile"].includes(hash))route=hash;
-applyTheme();render();
+function requestedRoute(){const hash=location.hash.slice(1);if(location.pathname.includes("/admin/")||hash==="admin")return "admin";if(studentRoutes.includes(hash))return hash;return "home"}
+async function bootstrapAuth(){
+ const requested=requestedRoute();
+ try{useAuthSession(await AuthService.getSession())}catch(error){useAuthSession(null);loginMessage=loginErrorText(error)}
+ authReady=true;
+ if(requested==="admin"&&AuthService.requireAdmin())route="admin";
+ else if(studentRoutes.includes(requested)&&AuthService.requireStudent())route=requested;
+ else{pendingRoute=requested;route="login";if(!loginMessage&&requested==="admin")loginMessage="Для Admin требуется отдельная авторизованная сессия.";else if(!loginMessage&&requested!=="home")loginMessage="Войди в профиль, чтобы продолжить."}
+ setRouteUrl(route);render();
+}
+applyTheme();render();bootstrapAuth();

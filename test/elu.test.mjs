@@ -56,6 +56,19 @@ test("student identity, Admin Preview and mutation layers are separated", () => 
   assert.match(app, /LocalDemoStore/);
 });
 
+test("authentication is provider-backed and never defaults to a local student", () => {
+  assert.match(app, /const AuthService=/);
+  for (const method of ["login(login,password)", "logout()", "getSession()", "getCurrentUser()", "requireStudent()", "requireAdmin()"]) assert.ok(app.includes(method), method);
+  assert.match(app, /window\.ELU_AUTH_PROVIDER/);
+  assert.match(app, /data-action="logout-request"/);
+  assert.match(app, /id="loginForm"/);
+  assert.match(app, /autocomplete="current-password"/);
+  assert.doesNotMatch(app, /currentStudentId\s*=\s*["']alena["']/);
+  assert.doesNotMatch(app, /localStorage\.setItem\([^\n]*elu-demo-student-id/);
+  assert.match(app, /localStorage\.removeItem\(LEGACY_SESSION_KEY\)/);
+  assert.doesNotMatch(app, /const\s+(passwords|credentials|accounts)\s*=/i);
+});
+
 test("mission and XP-only leaderboard flows are explicit", () => {
   assert.match(app, /function hasLeaderboardStarted/);
   assert.match(app, /data-action="open-current-mission"/);

@@ -13,7 +13,8 @@ ELU Live is an animated festival-style student dashboard and teacher tracker for
 - real JPG/PNG/WebP photo upload with validation, zoom/reposition crop, 512 px WebP optimization, replacement, and removal;
 - no random child photographs; monogram placeholders are the default;
 - standard system cursor, reduced-motion support, keyboard focus, mobile bottom navigation, and interaction animations;
-- click-level integration coverage for delegated Admin actions, overlays, XP, rewards, photo crop/save, Preview, theme, student identity, mission flow and leaderboard zero state.
+- provider-backed Login UI, student/Admin route guards, accessible show-password control, session restoration and confirmation-based Logout;
+- click-level integration coverage for login errors, injected authenticated sessions, logout, student isolation, delegated Admin actions, overlays, XP, rewards, photo crop/save, Preview, theme, mission flow and leaderboard zero state.
 
 ## Run
 
@@ -50,7 +51,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 
 ## Admin and tracker
 
-Open <http://localhost:4173/admin/tracker> or the compatible local route <http://localhost:4173/#admin>. The static runtime labels the control room honestly: it is a local functional prototype, **not a secure production auth boundary**. The Student UI has no Admin shortcut and teammate cards cannot change the active student. The public `#admin` URL remains an intentionally accessible Admin demo URL.
+Open <http://localhost:4173/admin/tracker> or <http://localhost:4173/#admin>. The route renders only when the connected auth provider returns a session with `role: "admin"`. A student session is redirected to Login and the Student UI has no Admin shortcut. This frontend guard prevents accidental UI access; the production API must independently enforce the Admin role on every mutation.
 
 For day-to-day tracking:
 
@@ -62,7 +63,7 @@ For day-to-day tracking:
 6. Use `Preview as Student` to verify the dashboard.
 7. Use the toast's `Undo` action if needed.
 
-Edits persist in `localStorage` under `elu-live-state-v2` through the versioned `LocalDemoStore` adapter. The demo student session ID is separate from the temporary Admin Preview ID. Settings offers a reversible **Reset demo progress** action; **Reset full season** requires typing `RESET SEASON`.
+Edits persist in `localStorage` under `elu-live-state-v2` through the versioned `LocalDemoStore` adapter. Authentication does not: the legacy `elu-demo-student-id` key is removed and ignored. Student identity comes only from the connected authenticated session. Temporary Admin Preview remains an in-memory, Admin-only mechanism and never changes that session. Settings offers a reversible **Reset demo progress** action; **Reset full season** requires typing `RESET SEASON`.
 
 `LocalDemoStore` exposes the current student, students, profile updates, XP transactions, reward grants, mission updates and submissions behind one adapter. A future `RemoteApiStore` can implement the same responsibilities without coupling UI components directly to browser storage.
 
@@ -89,7 +90,19 @@ Copy `.env.example` to `.env` only for a future server-backed deployment. Requir
 
 Google OAuth, VK OAuth, a PostgreSQL transaction ledger, private object storage, signed media URLs, server-side role checks, and protected mutation endpoints require those credentials plus a server runtime. They are not claimed as active in this static demo.
 
-The demo's application-role checks protect UI flows from accidental Student mutations, but JavaScript delivered by GitHub Pages cannot enforce real authorization. Real per-student login, Admin login, cross-device synchronization and a shared source of truth require backend authentication, server-side roles and a shared database.
+The Login screen calls the `AuthService` abstraction. It delegates to `window.ELU_AUTH_PROVIDER` and never contains a username/password table:
+
+```js
+window.ELU_AUTH_PROVIDER = {
+  async login(login, password) {}, // returns { user: { id, role, studentId } }
+  async logout() {},
+  async getSession() {}
+};
+```
+
+The provider must authenticate against a server or hosted identity platform, restore a secure session (preferably an HttpOnly, Secure, SameSite cookie), and return only the authenticated user model. It must return the same generic `invalid_credentials` code for an unknown login and a wrong password. Password hashing, rate limiting, lockout/reset flows, account provisioning for the four students, Admin account management, and API authorization all belong on the backend. No password or auth token may be written to `localStorage`, LocalDemoStore, logs, HTML, or repository files.
+
+No provider is configured in this repository, so GitHub Pages honestly shows `BACKEND REQUIRED` and cannot complete a real login. Tests inject an in-memory provider fixture to verify UI/session contracts without adding a production credential bypass. JavaScript delivered by GitHub Pages cannot enforce real authorization; real per-student login, Admin login, cross-device synchronization and a shared source of truth require backend authentication, server-side roles and a shared database.
 
 ## Missions
 
@@ -118,7 +131,7 @@ Admin → Missions supports create, edit, duplicate, and hide/show. The canonica
 
 GitHub Actions runs install, lint, syntax/type checks, tests and production artifact generation. The public repository contains only demo-safe assets, placeholders, source code and `.env.example`.
 
-The current source repository is [`yulchikyulenka89-ai/challenge-level-up`](https://github.com/yulchikyulenka89-ai/challenge-level-up). Its Pages workflow publishes the zero-state student demo at <https://yulchikyulenka89-ai.github.io/challenge-level-up/> after Pages is enabled with **GitHub Actions** as the source in repository settings.
+The current source repository is [`yulchikyulenka89-ai/challenge-level-up`](https://github.com/yulchikyulenka89-ai/challenge-level-up). Its Pages workflow publishes the frontend Login demo at <https://yulchikyulenka89-ai.github.io/challenge-level-up/> after Pages is enabled with **GitHub Actions** as the source in repository settings. Until an auth provider is connected, the deployed site intentionally does not open student or Admin data.
 
 GitHub Pages may host only a clearly labeled frontend demo. It must not be treated as production because static hosting cannot protect the Admin Tracker or private child media. Production requires a server platform connected to GitHub, authenticated sessions, PostgreSQL, private object storage, signed media delivery, consent/retention policy, backups, rate limiting and access logging.
 
