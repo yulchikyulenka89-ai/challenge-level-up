@@ -1,18 +1,27 @@
 import { existsSync, readFileSync } from "node:fs";
 
-const required = ["index.html", "styles.css", "app.js", "README.md", ".env.example", "docs/asset-map.md"];
+const required = ["index.html", "styles.css", "styles-polish.css", "app.js", "README.md", ".env.example", "docs/asset-map.md", "public/assets/hero/elu-hero-clean.png"];
 const gameAssets = ["ticket/ticket.png", "sticker/sticker.png", "access-key/access-key.png", "power-card/power-card.png", "drop/drop.png", "badge/badge.png", "crew-token/crew-token.png", "spotlight/spotlight.png"];
 const failures = [];
 for (const file of required) if (!existsSync(file)) failures.push(`Missing ${file}`);
 for (const file of gameAssets) if (!existsSync(`public/assets/game/${file}`)) failures.push(`Missing game asset ${file}`);
 const app = readFileSync("app.js", "utf8");
 const html = readFileSync("index.html", "utf8");
+const css = `${readFileSync("styles.css", "utf8")}\n${readFileSync("styles-polish.css", "utf8")}`;
 if (/<video\b|autoplay|\.mp4|\.webm/i.test(`${app}\n${html}`)) failures.push("Background video implementation must not exist");
 if (!/currentWeek:1/.test(app)) failures.push("Initial current week is not 1");
 if ((app.match(/transactions:\[\]/g) || []).length < 4) failures.push("All four students must start with empty XP transactions");
 if ((app.match(/inventory:\[\]/g) || []).length < 4) failures.push("All four students must start without assets");
 if ((app.match(/streak:0/g) || []).length < 4) failures.push("All four students must start with zero streak");
 if ((app.match(/progress:0/g) || []).length < 4) failures.push("All four students must start with zero progress");
+if ((app.match(/number:\d,title:/g) || []).length !== 8) failures.push("Season must contain exactly eight weeks");
+if (!/status:w\.number===1\?"Not Started":"Locked"/.test(app)) failures.push("Only Week 1 may start unlocked");
+if (/cursor-dot|cursor-ring|cursorEnabled|setupCursor|cursor-on|data-cursor/i.test(`${app}\n${html}\n${css}`)) failures.push("Custom cursor implementation must not exist");
+if (/\["assets","Ассеты"\]|assets:\s*renderAssets|function renderAssets/.test(app)) failures.push("Student Assets navigation must not exist");
+if (!/elu-theme/.test(`${app}\n${html}`)) failures.push("Persistent light/dark theme is missing");
+if (!/function assetUrl\(path\)/.test(app)) failures.push("GitHub Pages-safe asset resolver is missing");
+if (!/Моя коллекция/.test(app)) failures.push("Profile reward collection is missing");
+if (!html.includes('href="styles-polish.css"')) failures.push("Polish stylesheet is not linked");
 if (!html.includes('name="robots" content="noindex,nofollow,noarchive"')) failures.push("Private app robots policy missing");
 if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
 console.log("ELU static lint: OK");
