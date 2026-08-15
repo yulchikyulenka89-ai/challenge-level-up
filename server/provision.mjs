@@ -13,9 +13,12 @@ const accounts = [
 export async function provision(pool, env = process.env) {
   const missing = accounts.filter((account) => !env[account.env]).map((account) => account.env);
   if (missing.length) throw new Error(`Missing provisioning secrets: ${missing.join(", ")}`);
+
   const client = await pool.connect();
+  let createdAccounts = 0;
   try {
     await client.query("BEGIN");
+
     for (const student of studentSeeds) {
       await client.query(
         `INSERT INTO students(id,name,nickname,accent) VALUES($1,$2,$3,$4)
@@ -30,6 +33,7 @@ export async function provision(pool, env = process.env) {
         );
       }
     }
+
     for (const [week, title, description, instructions, baseXp, bonusXp, submissionType] of missionSeeds) {
       await client.query(
         `INSERT INTO missions(id,week,title,description,instructions,base_xp,bonus_xp,submission_type)
@@ -38,16 +42,33 @@ export async function provision(pool, env = process.env) {
         [`week-${week}`, week, title, description, instructions, baseXp, bonusXp, submissionType],
       );
     }
+
     await client.query("INSERT INTO app_settings(key,value_json) VALUES('currentWeek','1') ON CONFLICT(key) DO NOTHING");
+
     for (const account of accounts) {
-      const passwordHash = await argon2.hash(env[account.env], { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 });
+      const existing = await client.query("SELECT id FROM users WHERE username=$1 LIMIT 1", [account.username]);
+      if (existing.rowCount) {
+        await client.query(
+          `UPDATE users SET role=$1,student_id=$2,active=TRUE,updated_at=CURRENT_TIMESTAMP WHERE username=$3`,
+          [account.role, account.studentId, account.username],
+        );
+        continue;
+      }
+
+      const passwordHash = await argon2.hash(env[account.env], {
+        type: argon2.argon2id,
+        memoryCost: 19456,
+        timeCost: 2,
+        parallelism: 1,
+      });
       await client.query(
         `INSERT INTO users(id,username,password_hash,role,student_id,must_change_password)
-         VALUES($1,$2,$3,$4,$5,TRUE)
-         ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role,student_id=EXCLUDED.student_id,active=TRUE,must_change_password=TRUE,updated_at=CURRENT_TIMESTAMP`,
+         VALUES($1,$2,$3,$4,$5,TRUE)`,
         [randomUUID(), account.username, passwordHash, account.role, account.studentId],
       );
+      createdAccounts += 1;
     }
+
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -55,5 +76,6 @@ export async function provision(pool, env = process.env) {
   } finally {
     client.release();
   }
-  return { students: 4, admins: 1 };
+
+  return { students: 4, admins: 1, createdAccounts };
 }
