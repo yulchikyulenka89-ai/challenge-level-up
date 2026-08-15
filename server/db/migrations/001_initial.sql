@@ -1,0 +1,124 @@
+CREATE TABLE IF NOT EXISTS students (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  nickname TEXT NOT NULL,
+  level INTEGER NOT NULL DEFAULT 1 CHECK (level >= 1),
+  streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
+  longest_streak INTEGER NOT NULL DEFAULT 0 CHECK (longest_streak >= 0),
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  week_status TEXT NOT NULL DEFAULT 'Not Started',
+  accent TEXT NOT NULL,
+  private_note TEXT NOT NULL DEFAULT '',
+  feedback TEXT NOT NULL DEFAULT '',
+  photo_data BYTEA,
+  photo_mime TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('student', 'admin')),
+  student_id TEXT UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK ((role = 'student' AND student_id IS NOT NULL) OR (role = 'admin' AND student_id IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+  id TEXT PRIMARY KEY,
+  week INTEGER NOT NULL UNIQUE CHECK (week BETWEEN 1 AND 8),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  base_xp INTEGER NOT NULL DEFAULT 0,
+  bonus_xp INTEGER NOT NULL DEFAULT 0,
+  submission_type TEXT NOT NULL DEFAULT 'link',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  archived BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS week_progress (
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 8),
+  status TEXT NOT NULL DEFAULT 'Locked',
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  reward_id TEXT,
+  completed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (student_id, week)
+);
+
+CREATE TABLE IF NOT EXISTS xp_transactions (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  amount INTEGER NOT NULL CHECK (amount <> 0),
+  reason TEXT NOT NULL,
+  week INTEGER CHECK (week BETWEEN 1 AND 8),
+  admin_user_id TEXT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reward_grants (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  reward_id TEXT NOT NULL,
+  week INTEGER CHECK (week BETWEEN 1 AND 8),
+  admin_user_id TEXT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (student_id, reward_id, week)
+);
+
+CREATE TABLE IF NOT EXISTS submissions (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 8),
+  type TEXT NOT NULL,
+  value TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Submitted',
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (student_id, week)
+);
+
+CREATE TABLE IF NOT EXISTS feed_items (
+  id TEXT PRIMARY KEY,
+  icon TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  admin_user_id TEXT REFERENCES users(id),
+  action TEXT NOT NULL,
+  target TEXT NOT NULL,
+  before_summary TEXT,
+  after_summary TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value_json JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  sid VARCHAR NOT NULL PRIMARY KEY,
+  sess JSON NOT NULL,
+  expire TIMESTAMP(6) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expire ON user_sessions(expire);
+CREATE INDEX IF NOT EXISTS idx_xp_student ON xp_transactions(student_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
