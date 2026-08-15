@@ -47,6 +47,44 @@ function savedState(window) {
   return JSON.parse(window.localStorage.getItem("elu-live-state-v2"));
 }
 
+test("Challenge click opens Week 1 mission detail and locked Week 2 stays closed", async () => {
+  const { window, document, errors } = await boot();
+
+  click(window, document.querySelector('[data-route="challenge"]'));
+  assert.equal(window.location.hash, "#challenge");
+  const weekOne = document.querySelector('.big-week [data-action="view-week"][data-week="1"]');
+  assert.match(weekOne.textContent, /Открыть миссию/);
+  click(window, weekOne);
+  assert.equal(window.location.hash, "#missions");
+  assert.match(document.querySelector("#view").textContent, /Week 1/);
+  assert.match(document.querySelector("#view").textContent, /Who Am I\?/);
+  assert.match(document.querySelector("#view").textContent, /Two Truths & One Lie/);
+  assert.ok(document.querySelector(".mission-detail"), "mission detail screen is rendered");
+
+  click(window, document.querySelector('[data-route="challenge"]'));
+  const weekTwo = document.querySelector('.big-week [data-action="view-week"][data-week="2"]');
+  assert.equal(weekTwo.disabled, false, "locked control remains clickable so it can explain the lock");
+  assert.equal(weekTwo.getAttribute("aria-disabled"), "true");
+  click(window, weekTwo);
+  assert.equal(window.location.hash, "#challenge");
+  assert.equal(document.querySelector(".mission-detail"), null);
+  assert.match(document.querySelector(".toast-root").textContent, /Эта неделя пока закрыта/);
+
+  click(window, document.querySelector('[data-route="home"]'));
+  const homeMissionButtons = [...document.querySelectorAll('[data-action="open-current-mission"]')];
+  assert.equal(homeMissionButtons.length, 2, "hero and current-week card share the mission entry point");
+  click(window, homeMissionButtons[1]);
+  assert.equal(window.location.hash, "#missions");
+  assert.match(document.querySelector("#view").textContent, /Two Truths & One Lie/);
+
+  click(window, document.querySelector('[data-route="home"]'));
+  click(window, document.querySelector('.roadmap [data-action="view-week"][data-week="1"]'));
+  assert.equal(window.location.hash, "#missions");
+  assert.match(document.querySelector("#view").textContent, /Who Am I\?/);
+  assert.deepEqual(errors, []);
+  window.close();
+});
+
 test("student UI is read-only and mission/leaderboard zero-state flows work", async () => {
   const { window, document, errors } = await boot();
   assert.equal(document.querySelector('[data-action="open-admin"]'), null);
@@ -187,4 +225,35 @@ test("Admin delegated controls, nested overlays, XP, reward, photo and preview w
   }
   assert.deepEqual(errors, []);
   window.close();
+});
+
+test("all Student and Admin screens render at 1366x768 in Dark and Light themes", async () => {
+  const routes = ["home", "challenge", "missions", "crew", "events", "feed", "leaderboard", "profile"];
+  const adminTabs = ["tracker", "matrix", "lesson", "missions", "assets", "events", "audit", "media", "settings"];
+
+  for (const expectedTheme of ["dark", "light"]) {
+    const { window, document, errors } = await boot();
+    if (expectedTheme === "light") click(window, document.querySelector(".theme-toggle"));
+    assert.equal(document.documentElement.dataset.theme, expectedTheme);
+
+    for (const route of routes) {
+      click(window, document.querySelector(`[data-route="${route}"]`));
+      assert.equal(window.location.hash, route === "home" ? "" : `#${route}`);
+      assert.ok(document.querySelector(".page-enter"), `${expectedTheme} ${route} renders`);
+    }
+
+    window.history.replaceState(null, "", "#admin");
+    window.close();
+    const adminBoot = await boot("#admin");
+    if (expectedTheme === "light") click(adminBoot.window, adminBoot.document.querySelector(".admin-bar .theme-toggle"));
+    assert.equal(adminBoot.document.documentElement.dataset.theme, expectedTheme);
+    for (const tab of adminTabs) {
+      click(adminBoot.window, adminBoot.document.querySelector(`[data-admin-tab="${tab}"]`));
+      assert.equal(adminBoot.document.querySelector(".admin-tab.active").dataset.adminTab, tab);
+      assert.ok(adminBoot.document.querySelector(".admin-content"), `${expectedTheme} Admin ${tab} renders`);
+    }
+    assert.deepEqual(errors, []);
+    assert.deepEqual(adminBoot.errors, []);
+    adminBoot.window.close();
+  }
 });
